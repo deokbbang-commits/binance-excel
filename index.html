@@ -838,34 +838,39 @@ setInterval(()=>{
 
 /* ════════════════════════════
    셀 단위 업데이트
+   - 문자열 비교 대신 raw float 비교로 미세 변동도 감지
+   - 마크가격은 markPriceUpdate 스트림에서만 업데이트
 ════════════════════════════ */
-function patchTicker(base,d){
-  const chg=d.P||'';
-  const isUp=parseFloat(chg)>=0;
-  const pEl=document.getElementById('pct-'+base);
-  if(pEl){pEl.textContent=fc(chg);pEl.className=fcls(chg);}
-  const hEl=document.getElementById('mk-'+base);
-  if(hEl){
-    const nv=fp(d.c);
-    if(hEl.textContent!==nv){
-      hEl.textContent=nv;
-      hEl.classList.add(isUp?'fu':'fd');
-      setTimeout(()=>hEl.classList.remove('fu','fd'),400);
-    }
-  }
+function patchTicker(base, d){
+  // 전일대비만 업데이트 (마크가격 셀은 patchMark에서 전담)
+  const pctEl = document.getElementById('pct-'+base);
+  if(pctEl){ pctEl.textContent = fc(d.P||''); pctEl.className = fcls(d.P||''); }
 }
-function patchMark(base,d){
-  const mkEl=document.getElementById('mk-'+base);
+
+function patchMark(base, d){
+  const s = sym(base);
+  const newRaw  = parseFloat(d.p);
+  const prevRaw = parseFloat(coinData[s]?._prevMark || 0);
+
+  const mkEl = document.getElementById('mk-'+base);
   if(mkEl){
-    const nv=fp(d.p);
-    if(mkEl.textContent!==nv){
-      mkEl.textContent=nv;
-      mkEl.classList.add('fu');
-      setTimeout(()=>mkEl.classList.remove('fu'),400);
+    // 항상 텍스트 업데이트 (비교 없이)
+    mkEl.textContent = fp(newRaw);
+    // raw float 비교로 플래시 방향 결정
+    if(prevRaw && newRaw !== prevRaw){
+      const isUp = newRaw > prevRaw;
+      mkEl.classList.remove('fu','fd');
+      void mkEl.offsetWidth; // reflow → 애니메이션 재시작
+      mkEl.classList.add(isUp ? 'fu' : 'fd');
+      setTimeout(()=>mkEl.classList.remove('fu','fd'), 400);
     }
   }
-  const frEl=document.getElementById('fr-'+base);
-  if(frEl){frEl.textContent=ff(d.r);frEl.className=ffcls(d.r);}
+  // 이전 raw 값 저장
+  if(!coinData[s]) coinData[s]={};
+  coinData[s]._prevMark = newRaw;
+
+  const frEl = document.getElementById('fr-'+base);
+  if(frEl){ frEl.textContent = ff(d.r); frEl.className = ffcls(d.r); }
 }
 
 /* ════════════════════════════
@@ -887,12 +892,13 @@ async function fetchRest(){
   const cfg=mktCfg();
   try{
     const sp=watchlist.map(b=>`"${sym(b)}"`).join(',');
-    const [tr,mr]=await Promise.all([
+    // premiumIndex 는 symbols[] 배열 파라미터 미지원 → 개별 요청
+    const [tickRes, ...markResList]=await Promise.all([
       fetch(`${cfg.rest}/ticker/24hr?symbols=[${sp}]`),
-      fetch(`${cfg.rest}/premiumIndex?symbols=[${sp}]`)
+      ...watchlist.map(b=>fetch(`${cfg.rest}/premiumIndex?symbol=${sym(b)}`).then(r=>r.json()).catch(()=>null))
     ]);
-    const tickers=await tr.json();
-    const marks=await mr.json().catch(()=>[]);
+    const tickers=await tickRes.json();
+    const marks=markResList.filter(Boolean);
     tickers.forEach(d=>{
       const s=d.symbol;
       if(!coinData[s])coinData[s]={};
@@ -916,7 +922,8 @@ function connect(){
   if(ws){try{ws.close();}catch(e){} ws=null;}
   if(!liveMode)return;
   const cfg=mktCfg();
-  const streams=watchlist.flatMap(b=>[`${sym(b).toLowerCase()}@ticker`,`${sym(b).toLowerCase()}@markPrice`]).join('/');
+  // @markPrice@1s → 기본 3초에서 1초 갱신으로 단축
+  const streams=watchlist.flatMap(b=>[`${sym(b).toLowerCase()}@ticker`,`${sym(b).toLowerCase()}@markPrice@1s`]).join('/');
   ws=new WebSocket(`${cfg.ws}?streams=${streams}`);
   ws.onopen=()=>{
     wsRetry=0;
