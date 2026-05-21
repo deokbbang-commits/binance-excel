@@ -1,6 +1,6 @@
 {
-  "name": "바이낸스 선물 시세",
-  "short_name": "선물시세",
+  "name": "sabangnet",
+  "short_name": "sabangnet",
   "description": "바이낸스 선물 실시간 시세 대시보드",
   "start_url": "./",
   "scope": "./",
